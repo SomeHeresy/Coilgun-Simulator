@@ -1,3 +1,5 @@
+# a generic implementation of the Runge-Kutta 4th order method for solving capacitor discharge problems.
+# This is used in test_decay.py to solve the RLC circuit equations.
 def rk4_step(v_current, dt, derivative_func):
     k1_dvdt = derivative_func(v_current)
     vmid_a = v_current + k1_dvdt * (dt / 2)

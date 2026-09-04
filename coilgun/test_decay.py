@@ -20,7 +20,7 @@ print(f"Final current: {state_history[-1][1]:.6f} A")
 # --- Energy conservation check ---
 energies = []
 
-# Calculate stored energy in the capacitor and inductor at each time step, also the total energy in the system.
+# calculate stored energy in the capacitor and inductor at each time step, also the total energy in the system.
 for state in state_history:
     V, I = state[0], state[1]
     cap_energy = 0.5 * C * V**2
