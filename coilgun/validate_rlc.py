@@ -61,15 +61,21 @@ def convergence_test(dt, steps, V0, I0, R, L, C):
     return max_voltage_diff, max_current_diff
 
 
-# Run at normal dt, then at half dt -- double steps so both runs cover
-# the SAME total simulated time, which is required for a fair comparison.
-v_err_1, i_err_1 = convergence_test(
-    cfg.dt, cfg.steps, cfg.V0, cfg.I0, cfg.R, cfg.L, cfg.C)
-v_err_2, i_err_2 = convergence_test(
-    cfg.dt / 2, cfg.steps * 2, cfg.V0, cfg.I0, cfg.R, cfg.L, cfg.C)
+# Test at a coarser dt than production, same idea as validate_coilgun.py.
+# At cfg.dt the error is already down near 1e-14 relative, which is the double precision
+# floor -- the ratio then measures rounding noise instead of the method, and reads ~14.7
+# even though nothing is wrong. A coarser dt keeps the truncation error well above that floor.
+test_dt = 1e-5
+# same total simulated time as production
+test_steps = round(cfg.dt * cfg.steps / test_dt)
 
-print(f"dt = {cfg.dt:.2e}   max voltage error = {v_err_1:.6e} V   max current error = {i_err_1:.6e} A")
-print(f"dt/2 = {cfg.dt/2:.2e}   max voltage error = {v_err_2:.6e} V   max current error = {i_err_2:.6e} A")
+v_err_1, i_err_1 = convergence_test(
+    test_dt, test_steps, cfg.V0, cfg.I0, cfg.R, cfg.L, cfg.C)
+v_err_2, i_err_2 = convergence_test(
+    test_dt / 2, test_steps * 2, cfg.V0, cfg.I0, cfg.R, cfg.L, cfg.C)
+
+print(f"dt = {test_dt:.2e}   max voltage error = {v_err_1:.6e} V   max current error = {i_err_1:.6e} A")
+print(f"dt/2 = {test_dt/2:.2e}   max voltage error = {v_err_2:.6e} V   max current error = {i_err_2:.6e} A")
 print()
 print(
     f"Voltage error ratio (should be ~16 for true 4th-order RK4): {v_err_1/v_err_2:.2f}")
