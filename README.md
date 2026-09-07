@@ -18,17 +18,57 @@ be honest about the gap.
 
 ## Running it
 
-Python 3.10+.
+### 1. Check your Python
+
+You need Python 3.10 or newer.
+
+```bash
+python --version
+```
+
+If that prints something older, or says the command is not found, install Python from
+[python.org](https://www.python.org/downloads/). On Windows, tick **"Add Python to PATH"** during
+install. On some systems the command is `python3` instead of `python` -- if so, use `python3`
+everywhere below.
+
+### 2. Get the code and install the dependencies
+
+```bash
+git clone https://github.com/SomeHeresy/Coilgun-Simulator.git
+cd Coilgun-Simulator
+```
+
+A virtual environment is optional but keeps these packages out of your system Python:
+
+```bash
+python -m venv .venv
+```
+
+Activate it -- on Windows:
+
+```bash
+.venv\Scripts\activate
+```
+
+on macOS or Linux:
+
+```bash
+source .venv/bin/activate
+```
+
+Then install what the project needs (numpy, matplotlib, pytest):
 
 ```bash
 pip install -r requirements.txt
 ```
 
-Simulate one stage from a config file:
+### 3. Run your first simulation
 
 ```bash
-python -m coilgun.cli --config configs/v3_steel.json
+python -m coilgun.cli
 ```
+
+That simulates my actual V3 hardware and prints:
 
 ```
 ferromagnetic slug, 54.64 g, fired at 350 V from x0 = -22.0 mm
@@ -39,37 +79,244 @@ Efficiency: 2.541 J of 40.4 J = 6.29%
 Energy identity holds to 5.75e-14 relative
 ```
 
-The permanent magnet projectile:
+Note the `-m`. It runs the code as part of the `coilgun` package, which is what makes the imports
+resolve. Running `python coilgun/cli.py` directly will fail with an ImportError.
+
+---
+
+## Four ways to give it your own numbers
+
+**Nothing here requires editing Python source.** Pick whichever suits you.
+
+### A. Interactive -- it asks you
+
+The friendliest option if you have not used the tool before:
 
 ```bash
+python -m coilgun.cli --interactive
+```
+
+It walks you through every parameter, grouped by what they belong to, showing the current value in
+brackets. **Press Enter to keep a value**, or type a new one:
+
+```
+Coilgun simulator -- press Enter to keep the value in brackets.
+
+Projectile type (steel/magnet) [steel]: magnet
+
+Capacitor bank
+  Charge voltage, V [350.0]: 400
+  Capacitance, F [0.00066]:
+  Circuit resistance, ohm [0.15]:
+
+Coil and projectile
+  Coil inductance with slug far away L0, H [0.00075]:
+  Inductance rise with slug centred dL, H [4e-05]:
+  Width of the inductance bump a, m [0.0191]:
+  Projectile mass, kg [0.03923]:
+  Starting position, m (negative = before coil centre) [-0.022]:
+  Barrel end, m from coil centre [0.05]:
+  Peak flux linkage of the magnet, Wb [0.015]:
+  Width of the flux linkage bump, m [0.0191]:
+
+Solver
+  Time step, s [1e-06]:
+  Number of steps [45000]:
+```
+
+Choosing `steel` or `magnet` loads that projectile's whole parameter set, so you do not have to
+remember which mass goes with which inductance. Typing something that is not a number just asks
+again rather than crashing. Ctrl-C or Ctrl-D quits cleanly.
+
+`-i` is the short form.
+
+### B. Command line flags -- one value at a time
+
+Every parameter has a flag. Good for quick experiments and for scripting:
+
+```bash
+python -m coilgun.cli --V0 400
+```
+
+```bash
+python -m coilgun.cli --V0 500 --x0 -0.034 --mass 0.040
+```
+
+List them all with their current defaults:
+
+```bash
+python -m coilgun.cli --help
+```
+
+The flags are generated from the `Config` dataclass, so a parameter added there gets a flag
+automatically.
+
+### C. A JSON config file -- for setups you reuse
+
+Two are included:
+
+```bash
+python -m coilgun.cli --config configs/v3_steel.json
 python -m coilgun.cli --config configs/v3_magnet.json
 ```
 
-Write the full time series to CSV:
+To make your own, copy one and edit it. A config only needs the keys it changes -- everything else
+falls back to the defaults:
+
+```json
+{
+  "V0": 450.0,
+  "mass": 0.030,
+  "x0": -0.030
+}
+```
+
+```bash
+python -m coilgun.cli --config configs/my_setup.json
+```
+
+If you misspell a key you get told, rather than the run silently ignoring it:
+
+```
+unknown keys in configs/my_setup.json: volts
+```
+
+### D. Editing the defaults
+
+If you want your own hardware to be what runs when you type `python -m coilgun.cli` with no
+arguments, edit the values in `coilgun/config.py`. Every field has a comment giving its units and
+saying whether it is measured or estimated.
+
+### They stack
+
+The layers override each other in this order, each beating the ones before it:
+
+```
+config.py defaults  ->  --config file  ->  command line flags  ->  --interactive
+```
+
+So you can load a saved setup and change one thing:
+
+```bash
+python -m coilgun.cli --config configs/v3_steel.json --V0 500
+```
+
+or load a setup and then be walked through it with everything pre-filled:
+
+```bash
+python -m coilgun.cli --config configs/v3_magnet.json --interactive
+```
+
+---
+
+## Reading the output
+
+```
+ferromagnetic slug, 54.64 g, fired at 350 V from x0 = -22.0 mm
+```
+What was simulated. `x0` is the projectile's starting position measured from the coil centre;
+negative means behind it.
+
+```
+Peak velocity:  18.1358 m/s
+```
+The fastest the projectile ever goes, which happens at the coil centre. This is what you would get
+with perfect switch timing -- cutting the current at exactly the right instant.
+
+```
+Exit velocity:  9.6437 m/s
+```
+Speed at the barrel end. **This is the number a chronograph measures**, and the one to compare
+against real hardware.
+
+```
+Suckback loss between peak and exit: 8.4921 m/s (46.8%)
+```
+How much speed the coil took back after the projectile passed centre. Large numbers here mean your
+current is still flowing when it should not be.
+
+```
+Efficiency: 2.541 J of 40.4 J = 6.29%
+```
+Muzzle kinetic energy as a fraction of the energy stored in the capacitor bank. Real single-stage
+coilguns are typically 1-3%.
+
+```
+Energy identity holds to 5.75e-14 relative
+```
+A self-check that the integrator is not inventing or losing energy. **Anything much above about
+1e-10 means the result should not be trusted** -- usually a step size that is too large.
+
+---
+
+## Saving and plotting results
+
+Write the full time series (time, voltage, current, position, velocity, dissipated heat) to CSV:
 
 ```bash
 python -m coilgun.cli --config configs/v3_steel.json --csv results.csv
 ```
 
-Sweep the starting position and generate the plots:
+One row per step plus the starting state, so 12000 steps gives 12001 data rows under a header
+line. Open it in Excel, or plot it yourself.
+
+Generate the plots -- velocity against starting position, plus the four time-series panels:
 
 ```bash
 python -m coilgun.sweep
 ```
 
-Run the tests:
+This writes `results_sweep.png`, `results_timeseries.png` and `results_sweep.csv`. It runs 60
+simulations and takes a few seconds.
+
+---
+
+## Running the tests
 
 ```bash
 python -m pytest tests/ -v
 ```
 
-A config file only needs the keys it changes; everything else falls back to the defaults in
-`coilgun/config.py`. Unknown keys are rejected rather than silently ignored, so a typo tells you
-instead of quietly doing nothing.
+22 tests, about a second. They also run automatically on every push via GitHub Actions.
 
-There are also standalone scripts that print their own diagnostics rather than asserting:
-`python -m coilgun.run_rlc`, `coilgun.validate_rlc`, `coilgun.run_coilgun`,
-`coilgun.validate_coilgun`, and `coilgun.force`.
+---
+
+## Other scripts
+
+These print diagnostics rather than asserting, and were the checks I used while building each
+stage. They take no arguments and read `coilgun/config.py` directly:
+
+```bash
+python -m coilgun.force              # verifies dL/dx against a numerical derivative
+python -m coilgun.run_rlc            # circuit only, with an energy check
+python -m coilgun.validate_rlc       # circuit vs the analytic solution, convergence order
+python -m coilgun.run_coilgun        # full model, energy identity, writes a CSV
+python -m coilgun.validate_coilgun   # convergence order for the coupled model
+```
+
+---
+
+## If something goes wrong
+
+**`No module named coilgun`** -- you are not in the project folder, or you dropped the `-m`. Run
+from the directory containing the `coilgun/` folder, and use `python -m coilgun.cli`.
+
+**`No module named numpy` / `matplotlib` / `pytest`** -- dependencies are not installed, or your
+virtual environment is not activated. Run `pip install -r requirements.txt`.
+
+**`slug never reached x_exit=50.0 mm (got to +10.94 mm)`** -- the simulation ended before the
+projectile left the barrel. Increase `--steps`, or lower `--x_exit`. The magnet needs far more
+steps than the steel slug because it is slower.
+
+**`unknown keys in ...`** -- a typo in your JSON. The message names the offending key. Check it
+against `python -m coilgun.cli --help`.
+
+**Peak velocity is almost zero** -- the projectile probably starts outside the region where the
+force exists. `x0` and `a` are coupled: a narrow inductance bump means the projectile has to start
+closer to the coil. Try `--x0` around the same magnitude as `--a`.
+
+**Energy identity is large (above 1e-10)** -- the time step is too big for the parameters. Lower
+`--dt` and raise `--steps` by the same factor to cover the same span of time.
 
 ---
 

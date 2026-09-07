@@ -31,14 +31,121 @@ def write_csv(path, t, history):
             writer.writerow([f"{value:.9e}" for value in row])
 
 
+# The two projectiles I have. Mirrors configs/v3_steel.json and configs/v3_magnet.json.
+PROJECTILES = {
+    "steel": {"mass": 0.05464, "dL": 750e-6, "a": 0.0205,
+              "lam_pm": 0.0, "a_pm": 0.0191, "steps": 12000},
+    "magnet": {"mass": 0.03923, "dL": 40e-6, "a": 0.0191,
+               "lam_pm": 0.015, "a_pm": 0.0191, "steps": 45000},
+}
+
+
+# Ask for one value, showing the current one in brackets. Empty input keeps it, bad input asks
+# again rather than crashing halfway through a list of questions.
+def ask(label, current, cast=float):
+    while True:
+        raw = input(f"  {label} [{current}]: ").strip()
+        if raw == "":
+            return current
+        try:
+            return cast(raw)
+        except ValueError:
+            print(f"    '{raw}' is not a number, try again")
+
+
+def ask_choice(label, options, current):
+    while True:
+        raw = input(f"{label} ({'/'.join(options)}) [{current}]: ").strip().lower()
+        if raw == "":
+            return current
+        if raw in options:
+            return raw
+        print(f"    pick one of: {', '.join(options)}")
+
+
+# Walk the user through the parameters instead of making them write a config file.
+# Starts from whatever cfg was already built, so --config and --interactive combine.
+def ask_for_config(cfg):
+    print("Coilgun simulator -- press Enter to keep the value in brackets.")
+    print()
+
+    projectile = ask_choice("Projectile type", ("steel", "magnet"),
+                            "magnet" if cfg.lam_pm != 0 else "steel")
+    cfg = dataclasses.replace(cfg, **PROJECTILES[projectile])
+
+    print()
+    print("Capacitor bank")
+    cfg = dataclasses.replace(
+        cfg,
+        V0=ask("Charge voltage, V", cfg.V0),
+        C=ask("Capacitance, F", cfg.C),
+        R=ask("Circuit resistance, ohm", cfg.R))
+
+    print()
+    print("Coil and projectile")
+    cfg = dataclasses.replace(
+        cfg,
+        L0=ask("Coil inductance with slug far away L0, H", cfg.L0),
+        dL=ask("Inductance rise with slug centred dL, H", cfg.dL),
+        a=ask("Width of the inductance bump a, m", cfg.a),
+        mass=ask("Projectile mass, kg", cfg.mass),
+        x0=ask("Starting position, m (negative = before coil centre)", cfg.x0),
+        x_exit=ask("Barrel end, m from coil centre", cfg.x_exit))
+
+    if projectile == "magnet":
+        cfg = dataclasses.replace(
+            cfg,
+            lam_pm=ask("Peak flux linkage of the magnet, Wb", cfg.lam_pm),
+            a_pm=ask("Width of the flux linkage bump, m", cfg.a_pm))
+
+    print()
+    print("Solver")
+    cfg = dataclasses.replace(
+        cfg,
+        dt=ask("Time step, s", cfg.dt),
+        steps=ask("Number of steps", cfg.steps, int))
+
+    print()
+    return cfg
+
+
+# Give every field in Config its own command line flag, generated from the dataclass itself so
+# adding a parameter to Config makes it settable here without touching this file.
+def add_config_arguments(parser):
+    group = parser.add_argument_group(
+        "simulation parameters",
+        "any of these override the config file and the defaults in config.py")
+    for field in dataclasses.fields(Config):
+        group.add_argument(f"--{field.name}", type=type(field.default),
+                           help=f"default {field.default}")
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Simulate one coilgun stage and report peak and exit velocity.")
     parser.add_argument("--config", help="JSON file of Config overrides")
     parser.add_argument("--csv", help="write the time series to this CSV file")
+    parser.add_argument("-i", "--interactive", action="store_true",
+                        help="ask for each parameter instead of reading flags")
+    add_config_arguments(parser)
     args = parser.parse_args()
 
+    # three layers, each beating the one before it: config.py defaults, then the JSON file,
+    # then anything typed on the command line.
     cfg = load_config(args.config) if args.config else Config()
+    typed = {field.name: getattr(args, field.name)
+             for field in dataclasses.fields(Config)
+             if getattr(args, field.name) is not None}
+    if typed:
+        cfg = dataclasses.replace(cfg, **typed)
+
+    # interactive runs last so the questions are pre-filled with whatever the file and flags set.
+    # Ctrl-C or a closed stdin should quit cleanly, not dump a traceback.
+    if args.interactive:
+        try:
+            cfg = ask_for_config(cfg)
+        except (KeyboardInterrupt, EOFError):
+            raise SystemExit("\ncancelled")
 
     t, history = simulate(cfg)
     V_all, I_all, x_all, v_all, W_all = history.T
